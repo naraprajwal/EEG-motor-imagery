@@ -1,0 +1,11 @@
+============================================================
+REAL MOVEMENT EVALUATION
+============================================================
+
+Model              : ShallowConvNet
+Training Dataset   : Motor Imagery (R04,R08,R12)
+Testing Dataset    : Motor Execution (R03,R07,R11)
+Subjects           : [43, 44, 45, 46, 47, 48, 49, 50]
+Overall Accuracy   : 0.6361
+Total Trials       : 720
+Total Subjects     : 8

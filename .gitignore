@@ -234,9 +234,6 @@ env/
 # Data
 data/
 
-# Results
-results/
-
 # Models
 models/
 *.pth
