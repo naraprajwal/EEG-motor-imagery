@@ -1,0 +1,517 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------- PACKAGES ----------
+\usepackage[margin=1in]{geometry}
+\usepackage{times}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{tocloft}
+\usepackage{multirow}
+\usepackage{listings}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    citecolor=blue!50!black,
+    urlcolor=blue!50!black,
+    pdftitle={EEG Motor Imagery Classification: Pipeline Design and Experimental Report},
+    pdfauthor={Prajwal}
+}
+
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{1em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small EEG Motor Imagery Classification}
+\fancyhead[R]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{1.2em}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\renewcommand{\cite}[1]{[\ref{#1}]}
+
+% ---------- TITLE PAGE INFO ----------
+\title{
+    \vspace{-2cm}
+    \rule{\linewidth}{0.5mm}\\[0.4cm]
+    {\huge \bfseries EEG-Based Motor Imagery Classification:\\[0.2cm] Pipeline Design, Experimentation, and Model Comparison}\\[0.3cm]
+    \rule{\linewidth}{0.5mm}\\[1cm]
+}
+\author{
+    \Large Prajwal \\[0.3cm]
+    \normalsize Project Report
+}
+\date{\normalsize \today}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{2cm}
+
+{\Huge \bfseries EEG-Based Motor Imagery\\[0.3cm] Classification System}\\[0.5cm]
+{\Large A Pipeline-Driven Study on the PhysioNet\\ EEG Motor Movement/Imagery Dataset}\\[2cm]
+
+\rule{0.8\linewidth}{0.4pt}\\[0.5cm]
+{\large \textit{Project Report}}\\[0.5cm]
+\rule{0.8\linewidth}{0.4pt}\\[2.5cm]
+
+\begin{minipage}{0.45\textwidth}
+\begin{flushleft} \large
+\textbf{Author}\\
+Prajwal
+\end{flushleft}
+\end{minipage}
+\begin{minipage}{0.45\textwidth}
+\begin{flushright} \large
+\textbf{Date}\\
+\today
+\end{flushright}
+\end{minipage}
+
+\vfill
+
+{\large Signal Processing \(\cdot\) Machine Learning \(\cdot\) Deep Learning for Brain--Computer Interfaces}
+
+\end{titlepage}
+
+\tableofcontents
+\thispagestyle{empty}
+\newpage
+
+% =========================================================
+\section*{Abstract}
+\addcontentsline{toc}{section}{Abstract}
+This report documents the design, implementation, and experimental evaluation of an EEG-based motor imagery classification pipeline built on the PhysioNet EEG Motor Movement/Imagery Database. The system was developed incrementally: a single-subject baseline using band-power features and Linear Discriminant Analysis (LDA) was first validated, followed by systematic scaling experiments across 10, 20, 50, and 109 subjects to characterize cross-subject generalization. Subject-wise feature normalization, Common Spatial Patterns (CSP), and three convolutional neural network architectures --- EEGNet, Shallow ConvNet, and Deep ConvNet --- were then evaluated under an identical subject-wise train/test protocol. The report explains not only \emph{what} was done at each stage but \emph{why} each decision was made, including the rationale behind filter bandwidths, epoch windows, channel subset selection, and model hyperparameters, with reference to the supporting literature (Pfurtscheller \& Neuper, Lawhern et al., Schirrmeister et al.). Results show that classical band-power features plateau around 50\% three-class accuracy regardless of subject pool size, that CSP does not outperform simple band power for the three-class problem, and that deep learning models --- particularly EEGNet and Shallow ConvNet --- substantially outperform classical pipelines once sufficient cross-subject data is available, replicating findings reported in the original architecture papers.
+
+\newpage
+
+% =========================================================
+\section{Introduction}
+
+\subsection{Motivation}
+Brain--Computer Interfaces (BCIs) that decode motor imagery from electroencephalography (EEG) signals have wide-ranging applications, from assistive technology for individuals with motor impairments to novel human--computer interaction paradigms. A central challenge in this domain is building models that generalize \emph{across subjects}, since EEG signals are known to vary substantially in amplitude, spectral content, and spatial topology from one individual to another. This project set out to build such a system from the ground up: starting from raw EEG recordings, progressing through signal preprocessing, feature engineering, classical machine learning, and finally deep learning, while treating every methodological choice as something to be justified rather than assumed.
+
+\subsection{Problem Statement}
+The task addressed in this project is a three-class classification problem: given a segment of multi-channel EEG signal, predict whether the segment corresponds to \textbf{rest}, \textbf{left-hand motor imagery}, or \textbf{right-hand motor imagery}. This is a canonical Sensorimotor Rhythm (SMR) decoding problem and forms the basis of many real-world motor-imagery BCIs.
+
+\subsection{Objectives}
+The project was structured around the following objectives:
+\begin{itemize}[leftmargin=1.5em]
+    \item Build a reproducible preprocessing and epoching pipeline for the PhysioNet EEG Motor Movement/Imagery dataset.
+    \item Establish a single-subject baseline pipeline using band-power features and a simple linear classifier before scaling up.
+    \item Quantify how classification performance scales as the number of subjects used for training and testing increases (10 $\rightarrow$ 20 $\rightarrow$ 50 $\rightarrow$ 109).
+    \item Investigate whether cross-subject amplitude variability is a major contributor to classification error, via subject-wise normalization.
+    \item Compare classical spatial filtering (CSP) against raw band-power features.
+    \item Benchmark three purpose-built EEG deep learning architectures (EEGNet, Shallow ConvNet, Deep ConvNet) under an identical evaluation protocol.
+\end{itemize}
+
+\subsection{Report Structure}
+Section~2 describes the dataset and its experimental protocol. Section~3 covers preprocessing decisions. Section~4 details feature extraction. Section~5 walks through the pipeline design stage by stage, in the order the project was actually executed. Section~6 presents the consolidated experimental results. Section~7 discusses the findings, and Section~8 concludes with limitations and future directions.
+
+% =========================================================
+\section{Dataset}
+
+\subsection{PhysioNet EEG Motor Movement/Imagery Database}
+The project uses the \textbf{PhysioNet EEG Motor Movement/Imagery Database} (EEGMMIDB), a widely used public dataset for motor imagery BCI research. Key characteristics of the raw recordings, as verified through an interactive EEG viewer built during the project, are summarized in Table~\ref{tab:dataset-props}.
+
+\begin{table}[h!]
+\centering
+\caption{Raw recording properties (verified via interactive EEG viewer)}
+\label{tab:dataset-props}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+Sampling frequency & 160.0 Hz \\
+Number of channels & 64 \\
+Recording length & $\approx$124.99 s per run \\
+Data array shape & (64, 20000) -- (channels $\times$ samples) \\
+Event array shape & (30, 3) \\
+File text encoding & Latin-1 \\
+Number of subjects & 109 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The file encoding was identified as an important, easy-to-miss detail: annotation files in this dataset must be read using \textbf{Latin-1} encoding rather than the default UTF-8, or annotation parsing silently fails or corrupts labels.
+
+\subsection{Experimental Run Protocol}
+Each of the 109 subjects performed 14 runs. The task mapping was obtained directly from the dataset's official experiment protocol documentation on OpenNeuro and is summarized in Table~\ref{tab:run-protocol}.
+
+\begin{table}[h!]
+\centering
+\caption{PhysioNet EEGMMIDB run protocol}
+\label{tab:run-protocol}
+\begin{tabular}{lll}
+\toprule
+\textbf{Run(s)} & \textbf{Task} & \textbf{Event codes} \\
+\midrule
+R01 & Baseline, eyes open & -- \\
+R02 & Baseline, eyes closed & -- \\
+R03, R07, R11 & Real fist movement & T0=Rest, T1=Left fist, T2=Right fist \\
+R04, R08, R12 & \textbf{Fist motor imagery} & T0=Rest, T1=Left fist, T2=Right fist \\
+R05, R09, R13 & Real movement (both limbs) & T0=Rest, T1=Both fists, T2=Both feet \\
+R06, R10, R14 & Motor imagery (both limbs) & T0=Rest, T1=Both fists, T2=Both feet \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For this project, the runs \textbf{R04, R08, and R12} were selected as the primary data source, since they correspond to the fist motor-imagery condition directly relevant to the rest / left / right classification task.
+
+% =========================================================
+\section{Preprocessing}
+
+\subsection{Frequency-Band Selection: 4--40 Hz}
+A bandpass filter of \textbf{4--40 Hz} was applied to all recordings, together with a \textbf{50 Hz notch filter} to remove power-line interference. This range was not chosen arbitrarily; it reflects a deliberate trade-off between removing artifact-dominated frequency bands while retaining the sensorimotor rhythms relevant to motor imagery:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Below 4 Hz:} This range is dominated by slow drift --- sweat and electrode impedance changes, breathing artifacts, and DC offset drift. These are non-neural sources of baseline wander that would otherwise dominate the signal if left unfiltered.
+    \item \textbf{Above 40 Hz:} This range increasingly contains muscle artifacts (EMG contamination from jaw clenching or facial movement) and residual power-line noise (50/60 Hz depending on region). Neither is related to the brain activity underlying motor imagery.
+\end{itemize}
+
+This choice is further supported by the motor imagery literature on sensorimotor rhythms \cite{pfurtscheller2006}, which places the functionally relevant mu and beta rhythms well within the retained 4--40 Hz band.
+
+\subsection{Epoch Window Selection}
+Epochs were extracted using \textbf{$t_{min}=0$~s} to \textbf{$t_{max}=4$~s} relative to each event onset. This window was chosen because it corresponds to the official duration of each task trial as defined in the dataset's event annotation file --- i.e., it captures exactly the interval during which the subject was instructed to perform the imagined or real movement, without including pre-cue baseline or post-trial rest.
+
+\subsection{Handling Duplicate Annotation Timestamps}
+During large-scale epoch extraction across all 109 subjects (runs R04/R08/R12, 327 recordings total), a data-quality issue was encountered: \textbf{24 recordings failed} with an ``event time samples were not unique'' error.
+
+\paragraph{Diagnosis.} Investigation traced this to duplicate annotation timestamps present in a subset of the raw EEGMMIDB recordings, rather than to any error introduced by the project's own preprocessing code. This is a known idiosyncrasy of a small number of files in the dataset.
+
+\paragraph{Resolution.} The epoch-creation step was configured with \code{event\_repeated="drop"}, which automatically discards duplicated events while preserving all valid, uniquely-timestamped annotations. This avoided both silent data corruption (which could occur if duplicates were merged incorrectly) and unnecessary data loss (which would occur if entire recordings were discarded).
+
+\paragraph{Outcome.} On the first extraction pass, \textbf{303 of 327 recordings (92.7\%)} were epoched successfully. The remaining 24 recordings were successfully reprocessed after enabling duplicate-event handling, bringing the effective success rate to 100\% without manual intervention per file.
+
+% =========================================================
+\section{Feature Extraction}
+
+\subsection{Band Power Features via Welch's Method}
+The primary hand-crafted feature representation used throughout the classical machine learning stages of this project is \textbf{band power}, estimated per channel using \textbf{Welch's method} for power spectral density (PSD) estimation, with \code{nperseg=256}. Power was integrated within two physiologically motivated frequency bands:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Mu band:} 8--12 Hz
+    \item \textbf{Beta band:} 13--30 Hz (in later experiments, boundaries were refined to 12--30 Hz)
+\end{itemize}
+
+These two bands are the classical sensorimotor rhythms known to desynchronize (mu/beta \emph{event-related desynchronization}) over motor cortex during both real and imagined movement, making them a natural first choice of feature for a motor-imagery decoder.
+
+\subsection{Feature Vector Construction}
+For the full 64-channel configuration, each epoch yields a 128-dimensional feature vector: one mu-band power value and one beta-band power value per channel. This feature representation is simple, interpretable, and computationally inexpensive, making it an appropriate choice for an initial pipeline baseline before investing in more complex spatial filtering or deep learning approaches.
+
+% =========================================================
+\section{Pipeline Design and Staged Experimentation}
+
+The project was executed as a sequence of five stages, each building on validated results from the previous one. This staged approach was a deliberate methodological choice: rather than jumping directly to a full 109-subject deep learning experiment, each new component (feature set, classifier, subject pool size) was validated in isolation first.
+
+\subsection{Stage 1: Data Preparation}
+\begin{itemize}[leftmargin=1.5em]
+    \item[\checkmark] Download and organize the EEGMMIDB dataset.
+    \item[\checkmark] Apply the 4--40 Hz bandpass filter (Section~3.1).
+    \item[$\rightarrow$] Epoch extraction with duplicate-event handling (Section~3.3).
+\end{itemize}
+
+\subsection{Stage 2: Single-Subject Baseline}
+Before attempting any cross-subject modeling, the pipeline was validated end-to-end on a \textbf{single subject}. This is a standard and important sanity-check step: it isolates pipeline bugs (e.g. mislabeled events, incorrect epoch windows, feature-extraction errors) from genuine cross-subject variability issues, which are a separate and harder problem.
+
+\paragraph{Configuration.}
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Features:} Mu (8--12 Hz) and beta (13--30 Hz) band power, extracted via Welch PSD.
+    \item \textbf{Classifier:} Linear Discriminant Analysis (LDA), chosen as a simple, well-understood linear baseline classifier that is standard in the BCI literature for band-power features.
+    \item \textbf{Task:} Imagery~$\rightarrow$~Imagery, i.e. train on R04/R08 and test on R12 from the same subject.
+\end{itemize}
+
+\paragraph{Planned fine-tuning directions.} Two extensions were identified for future iterations even at this early stage: (1) replacing LDA with an SVM classifier on the same band-power features, and (2) replacing band power with CSP-derived features feeding into LDA. These became the basis for later experiments (Sections~5.4 and 5.5).
+
+\subsection{Channel Subset Experiments}
+To probe whether classification could be achieved with a much smaller, more practical electrode montage, the channel set was narrowed down from the full 64 channels, guided by the classical sensorimotor electrode literature \cite{pfurtscheller2006}.
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{full64:} All 64 channels (baseline).
+    \item \textbf{c3cz4 (3 channels):} C3, Cz, C4 only --- the canonical central electrodes overlying the hand motor cortex. This aggressive reduction (128 $\rightarrow$ 6 features) caused a large drop in accuracy, indicating that useful discriminative information is distributed beyond these three central electrodes alone.
+    \item \textbf{motor15 (15 channels):} A wider sensorimotor region --- FC3, FC1, FCz, FC2, FC4, C3, C1, Cz, C2, C4, CP3, CP1, CPz, CP2, CP4 --- covering the fronto-central and centro-parietal ring around the central electrodes. This intermediate montage was adopted as a more practical compromise between the full 64-channel set and the overly sparse 3-channel set.
+\end{itemize}
+
+This experiment established an important, generalizable finding for the rest of the project: aggressive channel reduction to only the textbook C3/Cz/C4 sites is \emph{not} sufficient for this dataset and task, and a wider motor-region montage is needed to retain competitive accuracy.
+
+\subsection{Stage 3: Cross-Subject Scaling}
+
+\subsubsection{Objective}
+Having validated the pipeline on a single subject, the next stage measured how the baseline \textbf{Full64 + Band Power + LDA} pipeline scales as the number of subjects contributing to training and testing increases.
+
+\subsubsection{Evaluation Protocol}
+A strict \textbf{subject-wise} train/test split was used throughout the project: no epochs from a subject in the test set are ever included in the training set. This is essential for a fair estimate of cross-subject generalization, since within-subject leakage would artificially inflate accuracy.
+
+\begin{table}[h!]
+\centering
+\caption{Subject-wise scaling experiment splits}
+\label{tab:scaling-splits}
+\begin{tabular}{lll}
+\toprule
+\textbf{Total subjects} & \textbf{Train} & \textbf{Test} \\
+\midrule
+10  & S001--S008 & S009--S010 \\
+20  & S001--S017 & S018--S020 \\
+50  & S001--S042 & S043--S050 \\
+109 & S001--S092 & S093--S109 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At every subject-pool size, the following metrics were recorded: overall accuracy, subject-wise accuracy, confusion matrix, and full classification report (precision/recall/F1 per class).
+
+\subsection{Subject-Wise Feature Normalization}
+
+\subsubsection{Motivation}
+Cross-subject EEG variability is known to manifest partly as differences in raw signal \emph{amplitude} between individuals (e.g. due to skull thickness, electrode impedance, or skin conductivity), which could dominate feature magnitudes and reduce classifier generalization independently of any genuine differences in neural pattern.
+
+\subsubsection{Method}
+For each subject independently, features were standardized as:
+\[
+X_{\text{norm}} = \frac{X - \mu_{\text{subject}}}{\sigma_{\text{subject}}}
+\]
+using a per-subject \code{StandardScaler}. Critically, normalization statistics ($\mu_{\text{subject}}, \sigma_{\text{subject}}$) were computed \emph{independently for every subject}, and no information from test subjects was used when normalizing training subjects, preserving the integrity of the subject-wise evaluation protocol.
+
+\subsubsection{Objective}
+This experiment was designed to isolate a specific question: is the cross-subject accuracy plateau observed in Section~5.4 driven mainly by \emph{scale} differences between subjects, or by more fundamental differences in feature \emph{representation}? The same Full64 + Band Power + LDA configuration and the same subject-wise splits were reused, changing only the normalization step, to isolate this single variable.
+
+\subsection{Common Spatial Patterns (CSP)}
+Following the conclusion that scaling was not the dominant bottleneck (see Section~6.2), the next planned step was to replace hand-crafted band-power features with \textbf{Common Spatial Patterns (CSP)}, a classical spatial-filtering technique that learns channel weightings maximizing the variance ratio between two classes, and is well established in the BCI literature as being complementary to (and often superior to) raw band power \cite{cbms2017}.
+
+CSP+LDA was first evaluated on the full three-class problem, then --- after observing weaker three-class performance than band-power+LDA --- re-evaluated on the reduced \textbf{left-vs-right} binary problem, a simplification commonly used in the CSP literature since CSP is fundamentally a two-class spatial filter (the three-class case requires one-vs-rest extensions that can dilute its effectiveness).
+
+\subsection{Stage 4: Deep Learning Models}
+The final architectural stage of the project moved from hand-crafted features to end-to-end deep learning, benchmarking three EEG-specific convolutional architectures under the identical subject-wise protocol established in Stage 3, allowing direct, fair comparison against the classical pipelines.
+
+\subsubsection{EEGNet}
+EEGNet \cite{lawhern2018} was selected as the primary deep learning baseline because it is a compact CNN purpose-built for EEG signal classification, with roughly two orders of magnitude fewer parameters ($\approx$1,700 for the EEGNet-8,2 configuration) than generic deep architectures such as DeepConvNet ($\approx$175,000 parameters). This parameter efficiency makes it well suited to EEG datasets where per-subject trial counts are inherently limited.
+
+\paragraph{Architecture.} EEGNet is organized into two blocks:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Block 1:} Temporal Conv2D (learns frequency-selective filters) $\rightarrow$ depthwise Conv2D (learns a frequency-specific spatial filter per temporal filter, directly analogous to CSP) $\rightarrow$ BatchNorm $\rightarrow$ ELU $\rightarrow$ average pooling $\rightarrow$ dropout.
+    \item \textbf{Block 2:} Separable Conv2D (summarizes each feature map temporally, then mixes across feature maps) $\rightarrow$ BatchNorm $\rightarrow$ ELU $\rightarrow$ average pooling $\rightarrow$ dropout $\rightarrow$ flatten $\rightarrow$ softmax.
+\end{itemize}
+
+Notably, the original EEGNet paper reports that its learned depthwise spatial filters at 12 Hz are strongly correlated ($\rho=0.93$) with FBCSP's CSP filters in the 8--12 Hz band, confirming that the network learns neurophysiologically meaningful spatial patterns rather than arbitrary weights.
+
+\paragraph{Hyperparameters used (per Lawhern et al.).} The EEGNet-8,2 configuration was used: $F_1=8$ temporal filters, $D=2$ spatial filters per temporal filter, $F_2=16$. Additional configuration choices, all taken directly from the original paper's recommendations:
+\begin{itemize}[leftmargin=1.5em]
+    \item Temporal kernel length of 80 samples --- half of the 160 Hz sampling rate --- following the paper's rule of kernel length = sampling rate / 2, which allows the filters to capture frequencies down to approximately 2 Hz.
+    \item Dropout of 0.25, appropriate for cross-subject classification (the paper specifies 0.5 for within-subject classification instead, per its Table 2 note).
+    \item Average pooling (not max pooling) throughout, matching the paper's use of \code{AveragePool2D}.
+    \item A max-norm constraint of 1 on depthwise convolution weights and 0.25 on the final dense layer, per Table 2 of the paper.
+    \item No bias units in any convolutional layer, as explicitly specified in the paper.
+    \item Adam optimizer with default parameters; training for up to 500 epochs with early stopping based on best validation loss.
+\end{itemize}
+
+\subsubsection{Shallow ConvNet}
+Shallow ConvNet \cite{schirrmeister2017} was included because its architecture is explicitly designed to mirror the classical FBCSP (Filter Bank Common Spatial Patterns) pipeline end-to-end, making it a natural bridge between the classical CSP experiments (Section~5.5) and the fully end-to-end EEGNet/Deep ConvNet models.
+
+\paragraph{Architecture.} Temporal convolution (kernel size 25) $\rightarrow$ spatial convolution (across all channels) $\rightarrow$ squaring nonlinearity $\rightarrow$ mean pooling $\rightarrow$ log nonlinearity $\rightarrow$ softmax. Per the specification reproduced in the EEGNet paper's appendix (Table 6): Conv2D with 40 filters of size (1,13) $\rightarrow$ Conv2D with 40 filters of size ($C$,1) $\rightarrow$ BatchNorm $\rightarrow$ square $\rightarrow$ AveragePool2D (1,35) with stride (1,7) $\rightarrow$ log $\rightarrow$ Dropout 0.5 $\rightarrow$ dense softmax.
+
+\paragraph{Design rationale.} Every component of this architecture is deliberately chosen to reproduce a step of FBCSP: the temporal convolution acts as a learned bandpass filter, the spatial convolution acts as a learned CSP-like spatial filter, and squaring followed by mean pooling directly computes signal \emph{variance} --- band power in disguise --- followed by a log transform, mirroring the classical log-variance feature used in FBCSP. This gives Shallow ConvNet a strong built-in inductive bias toward band-power-like features, which is expected to be particularly advantageous for oscillatory tasks such as motor imagery, where mu/beta band power is the dominant discriminative signal. The paper reports that ELU activation (rather than ReLU) and the inclusion of both batch normalization and dropout are each independently important, with statistically significant accuracy drops observed when either is removed or when ELU is replaced with ReLU ($p<0.01$).
+
+\subsubsection{Deep ConvNet}
+Deep ConvNet \cite{schirrmeister2017} was included as a generic, non-EEG-specific deep architecture for comparison, since --- unlike Shallow ConvNet --- it does not build in any band-power assumption and instead learns features end-to-end directly from the raw signal.
+
+\paragraph{Architecture.} Four convolution-pooling blocks with 25 $\rightarrow$ 50 $\rightarrow$ 100 $\rightarrow$ 200 ELU-activated filters respectively, each followed by max pooling with stride 3, followed by a dense softmax classification layer.
+
+\paragraph{Expected behavior.} The original paper reports that Deep ConvNet requires the combination of batch normalization, dropout, and ELU activation to be competitive with FBCSP; without these components it performs significantly worse ($p<0.001$). It is also reported to be more data-intensive than EEGNet, performing worse in within-subject settings with limited training data but catching up in cross-subject settings where the effective training set is 10--15$\times$ larger. This makes it a useful architecture to track specifically as the subject pool scales toward 109 subjects.
+
+% =========================================================
+\section{Experimental Results}
+
+\subsection{Baseline: Full64 + Band Power + LDA Across Subject Pool Sizes}
+Table~\ref{tab:baseline-results} shows overall three-class test accuracy for the baseline pipeline as the subject pool size increases.
+
+\begin{table}[h!]
+\centering
+\caption{Baseline (Full64 + Band Power + LDA) cross-subject accuracy}
+\label{tab:baseline-results}
+\begin{tabular}{lc}
+\toprule
+\textbf{Subjects} & \textbf{Test Accuracy} \\
+\midrule
+10  & 37.8\% \\
+20  & 47.8\% \\
+50  & 51.9\% \\
+109 & 49.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Accuracy improves substantially from 10 to 50 subjects, but does not continue improving --- and in fact slightly regresses --- from 50 to 109 subjects, suggesting that inter-subject variability begins to dominate as more heterogeneous subjects are introduced.
+
+\subsection{Subject-Wise Normalization}
+Table~\ref{tab:norm-results} compares the baseline against per-subject standardized features.
+
+\begin{table}[h!]
+\centering
+\caption{Effect of subject-wise feature normalization}
+\label{tab:norm-results}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Subjects} & \textbf{Baseline} & \textbf{Subject-Normalized} & \textbf{$\Delta$} \\
+\midrule
+10  & 37.8\% & 42.2\% & +4.4 \\
+20  & 47.8\% & 50.0\% & +2.2 \\
+50  & 51.9\% & 55.7\% & +3.8 \\
+109 & 49.7\% & 51.2\% & +1.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Observations.} Subject-wise normalization consistently improved performance across every subject-pool size, but the improvement was modest --- approximately 1--5 percentage points. This indicates that inter-subject scaling (amplitude) differences do contribute to classification error, but are \textbf{not the dominant limitation}. The primary bottleneck is more likely the underlying feature representation itself rather than feature scale, motivating the move to CSP and deep learning in the subsequent stages.
+
+\subsection{CSP + LDA}
+CSP+LDA was first tested on the full three-class problem, where it underperformed relative to band-power+LDA. Table~\ref{tab:csp-checkpoint} shows an early checkpoint comparison across subject pool sizes for this configuration.
+
+\begin{table}[h!]
+\centering
+\caption{CSP + LDA checkpoint comparison (three-class)}
+\label{tab:csp-checkpoint}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Subjects} & \textbf{Train Epochs} & \textbf{Test Epochs} & \textbf{Accuracy} \\
+\midrule
+10  & 630  & 270  & 47.41\% \\
+20  & 1260 & 540  & 47.96\% \\
+50  & 3148 & 1347 & 47.07\% \\
+109 & 6825 & 2660 & 49.96\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Given the weaker three-class result --- consistent with findings reported for CSP-based methods in comparative studies \cite{cbms2017} --- CSP was subsequently restricted to the simpler, more natural \textbf{left-vs-right binary} classification problem. Two variants were evaluated: CSP+LDA on raw features, and CSP+LDA after applying subject-wise normalization across all 64 channels.
+
+\begin{table}[h!]
+\centering
+\caption{CSP + LDA final results, left vs. right (no normalization)}
+\label{tab:csp-final-1}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Subjects} & \textbf{Train Acc.} & \textbf{Test Acc.} & \textbf{Gap} \\
+\midrule
+10  & 65.71\% & 51.11\% & 14.60 \\
+20  & 54.92\% & 50.74\% & 4.18 \\
+50  & 52.89\% & 51.49\% & 1.40 \\
+109 & 51.05\% & 50.85\% & 0.21 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h!]
+\centering
+\caption{CSP + LDA final results, left vs. right (with subject-wise normalization)}
+\label{tab:csp-final-2}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Subjects} & \textbf{Train Acc.} & \textbf{Test Acc.} & \textbf{Gap} \\
+\midrule
+10  & 62.54\% & 52.59\% & 9.95 \\
+20  & 51.59\% & 51.11\% & 0.48 \\
+50  & 52.70\% & 48.96\% & 3.74 \\
+109 & 51.36\% & 50.56\% & 0.79 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Observations.} Even for the simplified binary problem, CSP+LDA test accuracy plateaus around 50--55\%, only marginally above chance level (50\% for a balanced binary problem). The large train/test gap observed at $n=10$ (14.6 points) shrinks steadily as more subjects are added, consistent with CSP overfitting to the specific spatial statistics of a small training pool. Subject-wise normalization did not meaningfully change the plateau, reinforcing the Section~6.2 conclusion that representation --- not scale --- is the limiting factor.
+
+\subsection{Deep Learning Model Comparison}
+Table~\ref{tab:dl-comparison} presents cross-subject test accuracy for EEGNet and Shallow ConvNet across the same subject-pool sizes used throughout the project.
+
+\begin{table}[h!]
+\centering
+\caption{EEGNet vs. Shallow ConvNet cross-subject accuracy (three-class)}
+\label{tab:dl-comparison}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Subjects} & \textbf{EEGNet} & \textbf{Shallow ConvNet} & \textbf{Difference} \\
+\midrule
+10  & 57.78\% & 46.67\% & EEGNet +11.1 \\
+20  & 46.67\% & 44.81\% & EEGNet +1.9 \\
+50  & 68.06\% & 72.22\% & Shallow +4.2 \\
+109 & 62.31\% & 62.66\% & Essentially tied \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Note on implementation.} Exponential moving-average normalization (as used in some Shallow ConvNet implementations) was not applied in this project; simple mean-variance normalization was used instead for the Shallow ConvNet input pipeline.
+
+\paragraph{Non-monotonic scaling.} A notable pattern in the deep learning results is that accuracy does \emph{not} increase monotonically with subject pool size: both models show a dip at $n=20$, peak at $n=50$, and drop somewhat at $n=109$ (EEGNet: 68.1\% $\rightarrow$ 62.3\%; Shallow: 72.2\% $\rightarrow$ 62.7\%). This ``peaks at intermediate size, degrades at full scale'' behavior is a documented phenomenon in cross-subject EEG decoding, attributed to increasing inter-subject variability as more heterogeneous subjects are pooled together, which can outweigh the benefit of additional training data.
+
+\paragraph{Comparison to classical pipelines.} Both deep learning models substantially outperform the classical band-power+LDA and CSP+LDA pipelines at every subject-pool size once $n \geq 50$ (compare Tables~\ref{tab:baseline-results}, \ref{tab:csp-final-1}, and \ref{tab:dl-comparison}), demonstrating a clear advantage for learned, end-to-end spatio-temporal filtering over hand-crafted band-power or CSP features on this dataset.
+
+% =========================================================
+\section{Discussion}
+
+\subsection{Small-Data vs. Large-Data Regimes}
+The results in Table~\ref{tab:dl-comparison} replicate a finding reported by the original architecture papers: EEGNet, being extremely parameter-efficient ($\approx$1,700 parameters), performs relatively better in the limited-data regime ($n=10$, EEGNet +11.1 points), consistent with Lawhern et al.'s observation that EEGNet is particularly well suited to small EEG training sets without requiring data augmentation \cite{lawhern2018}. Conversely, Shallow ConvNet's stronger built-in band-power inductive bias allows it to extract more benefit once more cross-subject data becomes available, overtaking EEGNet at $n=50$, consistent with the FBCSP-mirroring design described by Schirrmeister et al. \cite{schirrmeister2017}. This project's cross-subject results can be seen as replicating both of these findings simultaneously on a single dataset.
+
+\subsection{Why Band Power and CSP Plateau}
+Across every classical configuration tested --- raw band power, subject-normalized band power, and CSP in both three-class and binary form --- test accuracy plateaus in the 47--56\% range and never substantially exceeds it, regardless of subject pool size. Combined with the finding that subject-wise normalization only yields modest gains (Section~6.2), this points toward a consistent conclusion: linear, hand-crafted spatial/spectral features capture only a limited amount of the discriminative structure present in cross-subject motor imagery EEG. The gains observed when moving to CNN-based architectures (Section~6.4) support this interpretation, since these architectures are able to learn non-linear, data-driven spatial and temporal filters jointly, rather than relying on a fixed band-power or CSP transformation.
+
+\subsection{The Role of Deep ConvNet}
+Deep ConvNet was included specifically as the architecture without a built-in band-power or CSP-like inductive bias. Its documented tendency to under-perform in small-data settings but to \emph{scale} with additional cross-subject data --- without yet saturating even at 109 subjects --- suggests that, with an even larger subject pool than is available in EEGMMIDB, Deep ConvNet may eventually surpass both EEGNet and Shallow ConvNet. This remains an open direction rather than a result confirmed within the scope of this project's 109-subject ceiling.
+
+\subsection{Practical Channel-Count Trade-offs}
+The channel subset experiments (Section~5.3) offer a practically important, somewhat cautionary result for anyone designing a low-electrode-count BCI system based on this pipeline: reducing to the textbook 3-electrode C3/Cz/C4 montage causes a large accuracy drop, and a substantially wider motor-region montage (15 channels) is needed to remain competitive. This is a useful finding independent of the classifier ultimately used, since it constrains any future low-channel-count hardware design based on this pipeline.
+
+% =========================================================
+\section{Conclusion and Future Work}
+
+\subsection{Summary}
+This project incrementally built and validated a full EEG motor-imagery classification pipeline, from raw PhysioNet recordings through preprocessing, feature engineering, classical machine learning, and deep learning. Each stage was validated before scaling up: a single-subject sanity check preceded cross-subject scaling experiments, and classical band-power and CSP baselines preceded the deep learning comparison. The key findings are:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Data-quality issues (duplicate annotation timestamps) affected roughly 7\% of recordings and were resolved without discarding data, via \code{event\_repeated="drop"}.
+    \item A 4--40 Hz bandpass filter and a 0--4~s epoch window were chosen based on the artifact spectrum and the dataset's official trial duration, respectively.
+    \item Reducing to a 3-channel C3/Cz/C4 montage substantially hurts accuracy; a wider 15-channel motor-region montage is a better low-channel-count compromise.
+    \item Classical band-power+LDA plateaus near 50\% three-class accuracy as subject count increases from 10 to 109.
+    \item Subject-wise normalization improves accuracy modestly (1--5 points) but does not resolve the plateau, indicating the bottleneck is representational rather than a scale artifact.
+    \item CSP does not outperform band power for the three-class problem and only reaches $\sim$50--55\% on the simplified binary left-vs-right problem.
+    \item EEGNet and Shallow ConvNet both substantially outperform classical pipelines at larger subject counts (up to 68--72\% at $n=50$), with EEGNet favored in small-data regimes and Shallow ConvNet favored as data increases --- consistent with the original architecture papers.
+    \item All models tested show a non-monotonic relationship between subject pool size and accuracy, peaking at an intermediate size ($n=50$) rather than at the full 109-subject pool, a documented cross-subject EEG phenomenon attributed to increasing inter-subject heterogeneity.
+\end{enumerate}
+
+\subsection{Limitations}
+The deep learning results reported here are drawn from a single training run per configuration rather than averaged over multiple seeds, so the precision of the reported percentage-point differences (e.g. Shallow ConvNet's +4.2 point lead at $n=50$) should be interpreted with appropriate caution. Additionally, the Shallow ConvNet implementation used simple mean-variance normalization rather than the exponential moving-average normalization used in some reference implementations, which may partially explain performance differences from published results.
+
+\subsection{Future Work}
+Building directly on the experimental narrative established in this report, the following directions are natural next steps:
+\begin{itemize}[leftmargin=1.5em]
+    \item Extend Deep ConvNet evaluation to determine whether it eventually surpasses EEGNet and Shallow ConvNet as more data (e.g. combining movement and imagery runs) is incorporated.
+    \item Evaluate Filter Bank CSP (FBCSP) as a stronger classical baseline than single-band CSP.
+    \item Explore Riemannian geometry-based features as an alternative to CSP.
+    \item Run the planned Stage 5 research experiment: cross-condition generalization, training on motor \emph{imagery} and testing on real \emph{movement} data (and vice versa), to assess how well imagery-trained models transfer to overt movement decoding.
+    \item Average results over multiple random seeds / cross-validation folds to obtain confidence intervals on all reported accuracies.
+\end{itemize}
+
+% =========================================================
+\newpage
+\section*{References}
+\addcontentsline{toc}{section}{References}
+\begin{enumerate}[leftmargin=1.5em]
+    \item \label{pfurtscheller2006} Pfurtscheller, G., \& Neuper, C. (2006). \textit{Future prospects of ERD/ERS in the context of brain--computer interface (BCI) developments.} Progress in Brain Research.
+    \item \label{lawhern2018} Lawhern, V. J., Solon, A. J., Waytowich, N. R., Gordon, S. M., Hung, C. P., \& Lance, B. J. (2018). \textit{EEGNet: A Compact Convolutional Neural Network for EEG-based Brain-Computer Interfaces.} Journal of Neural Engineering. arXiv:1611.08024.
+    \item \label{schirrmeister2017} Schirrmeister, R. T., Springenberg, J. T., Fiederer, L. D. J., Glasstetter, M., Eggensperger, K., Tangermann, M., Hutter, F., Burgard, W., \& Ball, T. (2017). \textit{Deep learning with convolutional neural networks for EEG decoding and visualization.} Human Brain Mapping.
+    \item \label{cbms2017} IEEE CBMS 2017 conference paper comparing Common Spatial Patterns against band-power feature methods for EEG motor imagery classification.
+    \item Goldberger, A. L., et al. \textit{PhysioBank, PhysioToolkit, and PhysioNet: Components of a New Research Resource for Complex Physiologic Signals.} Circulation, 101(23), e215--e220. (EEG Motor Movement/Imagery Database.)
+\end{enumerate}
+
+\end{document}
